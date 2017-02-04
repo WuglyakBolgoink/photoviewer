@@ -50,30 +50,39 @@
     CGPoint center = self.viewController.view.center;
     activityIndicator.center = center;
     [self.viewController.view addSubview:activityIndicator];
-    
+
     [activityIndicator startAnimating];
-    
-    
+
+
     CDVPluginResult* pluginResult = nil;
     NSString* url = [command.arguments objectAtIndex:0];
     NSString* title = [command.arguments objectAtIndex:1];
 
-    if (url != nil && [url length] > 0) {
+    if (url != nil && [url length] > 0)
+    {
         [self.commandDelegate runInBackground:^{
             self.documentURLs = [NSMutableArray array];
 
-            NSURL *URL = [self localFileURLForImage:url];
+            @try {
+                NSURL *URL = [self localFileURLForImage:url];
 
-            if (URL) {
-                [self.documentURLs addObject:URL];
-                [self setupDocumentControllerWithURL:URL andTitle:title];
-                double delayInSeconds = 0.1;
-                dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, delayInSeconds * NSEC_PER_SEC);
-                dispatch_after(popTime, dispatch_get_main_queue(), ^(void){
-                    [activityIndicator stopAnimating];
-                    [self.docInteractionController presentPreviewAnimated:YES];
-                });
+                if (URL)
+                {
+                    [self.documentURLs addObject:URL];
+                    [self setupDocumentControllerWithURL:URL andTitle:title];
+                }
             }
+            @catch (NSException * e)
+            {
+                NSLog(@"Exception: %@", e);
+            }
+
+            double delayInSeconds = 0.1;
+            dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, delayInSeconds * NSEC_PER_SEC);
+            dispatch_after(popTime, dispatch_get_main_queue(), ^(void){
+                [activityIndicator stopAnimating];
+                [self.docInteractionController presentPreviewAnimated:YES];
+            });
         }];
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     } else {
@@ -85,23 +94,64 @@
 
 - (NSURL *)localFileURLForImage:(NSString *)image
 {
+    NSString* imagePath = [image stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLFragmentAllowedCharacterSet]];
+    NSLog(@"0. imagePath %@", imagePath);
+
     // save this image to a temp folder
     NSURL *tmpDirURL = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
+    NSLog(@"1. tmpDirURL %@", tmpDirURL);
+
     NSString *filename = [[NSUUID UUID] UUIDString];
-    NSURL *fileURL = [NSURL URLWithString:image];
+    NSLog(@"2. filename %@", filename);
+
+    NSURL *fileURL = [NSURL URLWithString:imagePath];
+
+        @try
+        {
+            NSNumber *fileSizeValue = nil;
+            [fileURL getResourceValue:&fileSizeValue
+                               forKey:NSURLFileSizeKey
+                                error:nil];
+
+            NSLog(@"0. Image size fileSizeValue %i", fileSizeValue);
+        }
+        @catch (NSException * e)
+        {
+            NSLog(@"0. Can not get filesize");
+        }
+
     if ([fileURL isFileReferenceURL]) {
+        NSLog(@"3. fileURL is isFileReferenceURL -> return fileURL");
+
         return fileURL;
     }
 
+    NSLog(@"4. fileURL not isFileReferenceURL.");
+
     NSData *data = [NSData dataWithContentsOfURL:fileURL];
 
-    if( data ) {
-        fileURL = [[tmpDirURL URLByAppendingPathComponent:filename] URLByAppendingPathExtension:[self contentTypeForImageData:data]];
+    NSLog(@"Match data equals empty nsdata? %@",[data length] == 0 ? @"YES" : @"NO");
 
-        [[NSFileManager defaultManager] createFileAtPath:[fileURL path] contents:data attributes:nil];
+    if( data && [data length] > 0 ) {
+        NSLog(@"5. Data exist");
 
-        return fileURL;
+        @try {
+            fileURL = [[tmpDirURL URLByAppendingPathComponent:filename] URLByAppendingPathExtension:[self contentTypeForImageData:data]];
+            NSLog(@"7. fileURL %@", fileURL);
+
+            NSLog(@"10. Use NSFileManager to open file");
+            [[NSFileManager defaultManager] createFileAtPath:[fileURL path] contents:data attributes:nil];
+
+            return fileURL;
+        }
+        @catch (NSException * e) {
+            NSLog(@"8. Error: fileURL[%@] can not be open!!!", filename);
+            NSLog(@"Exception: %@", e);
+        }
+
+        return nil;
     } else {
+        NSLog(@"9. Data not exist!");
         return nil;
     }
 }
@@ -112,14 +162,21 @@
 
     switch (c) {
         case 0xFF:
+            NSLog(@"6. contentTypeForImageData: %02x - %@", c, @"jpeg");
             return @"jpeg";
         case 0x89:
+            NSLog(@"6. contentTypeForImageData: %02x - %@", c, @"png");
             return @"png";
         case 0x47:
+            NSLog(@"6. contentTypeForImageData: %02x - %@", c, @"gif");
             return @"gif";
         case 0x49:
         case 0x4D:
+            NSLog(@"6. contentTypeForImageData: %02x - %@", c, @"tiff");
             return @"tiff";
+        default:
+            NSLog(@"6. ERROR! contentTypeForImageData: %02x - UNKOWN TYPE", c);
+            return nil;
     }
     return nil;
 }
